@@ -1,0 +1,1439 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a882ff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z'/></svg>">
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              obsi: {
+                bg: '#1e1e1e', panel: '#252525', border: '#363636',
+                text: '#dcddde', muted: '#8b9eb7', accent: '#a882ff'
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
+      ::-webkit-scrollbar-track { background: #1e1e1e; }
+      ::-webkit-scrollbar-thumb { background: #363636; border-radius: 4px; }
+      ::-webkit-scrollbar-thumb:hover { background: #a882ff; }
+      body { margin: 0; overflow-x: hidden; }
+      .sticky-col { position: sticky; left: 0; z-index: 30; }
+      
+      #toast {
+        visibility: hidden; min-width: 250px; background-color: #333; color: #fff; text-align: center;
+        border-radius: 8px; padding: 12px; position: fixed; z-index: 100; left: 50%; bottom: 30px;
+        transform: translateX(-50%); font-size: 14px; font-weight: bold; box-shadow: 0px 4px 15px rgba(0,0,0,0.5);
+        opacity: 0; transition: opacity 0.3s, bottom 0.3s;
+      }
+      #toast.show { visibility: visible; opacity: 1; bottom: 50px; }
+
+      .cmd-scroll::-webkit-scrollbar { width: 4px; }
+      @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+      .slide-up { animation: slideUp 0.2s ease-out forwards; }
+      #dev-screen { transition: opacity 0.5s ease-in-out; }
+    </style>
+
+    <!-- FIREBASE INITIALIZATION (Live Cross-Platform Sync) -->
+    <script type="module">
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+      import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+      import { getFirestore, doc, onSnapshot, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+      window.completedTasksArray = [];
+      window.todayDocRef = null;
+      window.fbSetDoc = null;
+
+      window.initFirebase = async function() {
+          try {
+              const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+              if (!firebaseConfig) return; 
+              
+              const app = initializeApp(firebaseConfig);
+              const auth = getAuth(app);
+              const db = getFirestore(app);
+              
+              if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                  await signInWithCustomToken(auth, __initial_auth_token);
+              } else {
+                  await signInAnonymously(auth);
+              }
+              
+              const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+              
+              // Date-based document cleanly resets checklists every single day
+              const todayStr = new Date().toISOString().split('T')[0]; 
+              window.todayDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'dailyTasks', todayStr);
+              window.fbSetDoc = setDoc;
+              
+              onSnapshot(window.todayDocRef, (docSnap) => {
+                  if (docSnap.exists()) {
+                      window.completedTasksArray = docSnap.data().completed || [];
+                  } else {
+                      window.completedTasksArray = [];
+                  }
+                  if (typeof updateTaskVisuals === 'function') updateTaskVisuals();
+              }, (err) => console.error("Firestore Err:", err));
+              
+          } catch(e) { console.error("Firebase Init Err:", e); }
+      };
+      
+      window.initFirebase();
+    </script>
+  </head>
+  
+  <body class="bg-obsi-bg text-obsi-text font-sans min-h-screen relative">
+    
+    <canvas id="starMap" class="fixed inset-0 z-0 w-full h-full pointer-events-auto"></canvas>
+    <div id="toast">Copied to clipboard!</div>
+
+    <!-- KONAMI EASTER EGG SCREEN -->
+    <div id="dev-screen" class="hidden fixed inset-0 z-[9999] bg-black text-green-500 font-mono flex">
+      <div class="w-1/2 h-full border-r border-green-800 p-6 overflow-hidden flex flex-col">
+        <h2 class="text-xl font-bold mb-4 animate-pulse">>>> NETWORK DIAGNOSTICS</h2>
+        <div id="ping-log" class="text-xs space-y-1 overflow-y-auto flex-1 opacity-80"></div>
+      </div>
+      <div class="w-1/2 h-full p-8 flex flex-col items-center justify-center bg-[#0a0a0a]">
+        <h1 class="text-4xl text-amber-500 font-extrabold mb-8 tracking-widest border-b-2 border-amber-500/50 pb-4">DEVELOPER MENU</h1>
+        <div class="space-y-6 w-full max-w-md">
+          <div class="flex justify-between items-baseline border-b border-gray-800 pb-2"><span class="text-lg text-white font-bold">High-Protein Chicken Salad</span><span class="text-amber-500">45g Prot</span></div>
+          <div class="flex justify-between items-baseline border-b border-gray-800 pb-2"><span class="text-lg text-white font-bold">Tuna & Oats Power Bowl</span><span class="text-amber-500">60g Prot</span></div>
+          <div class="flex justify-between items-baseline border-b border-gray-800 pb-2"><span class="text-lg text-white font-bold">Rich Pure Cocoa w/ Gold Leaf</span><span class="text-amber-500">Luxury</span></div>
+          <div class="flex justify-between items-baseline border-b border-gray-800 pb-2"><span class="text-lg text-white font-bold">Triple Shot Espresso</span><span class="text-amber-500">Infinite Energy</span></div>
+        </div>
+        <button onclick="closeDevScreen()" class="mt-12 px-6 py-2 border border-green-500 text-green-500 hover:bg-green-500 hover:text-black transition-colors rounded">EXIT TERMINAL</button>
+      </div>
+    </div>
+
+    <!-- MINECRAFT STYLE COMMAND PALETTE -->
+    <div id="mc-command-overlay" class="hidden fixed inset-0 z-[110] bg-black/75 backdrop-blur-[3px] transition-opacity flex flex-col justify-end p-0" onclick="if(event.target === this) closeMcCommandPalette()">
+       <div class="w-full max-w-3xl mx-auto bg-[#161616]/95 border-t border-x border-obsi-border rounded-t-xl shadow-[0_-10px_40px_rgba(0,0,0,0.9)] flex flex-col overflow-hidden slide-up">
+          <div id="mc-suggestions" class="max-h-64 overflow-y-auto custom-scrollbar p-2 flex flex-col gap-1 border-b border-obsi-border/50">
+              <div class="text-xs text-obsi-muted px-2 py-1">Type a command or query...</div>
+          </div>
+          <div class="flex items-center p-3 gap-3 bg-[#0c0c0c]">
+             <span class="text-obsi-muted font-mono font-bold text-lg select-none">></span>
+             <input type="text" id="mc-cmd-input" class="w-full bg-transparent text-white font-mono text-sm focus:outline-none placeholder-obsi-muted/30" placeholder="Type a command (e.g. ask, help) or ask a question directly..." autocomplete="off">
+          </div>
+       </div>
+    </div>
+
+    <!-- COMMAND/WIKI ANSWER MODAL -->
+    <div id="cmd-modal" class="hidden fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onclick="if(event.target === this) closeCmdModal()">
+      <div class="bg-[#1a1a1a] border border-obsi-border rounded-xl shadow-2xl max-w-lg w-full overflow-hidden flex flex-col transform transition-all">
+        <div class="p-4 border-b border-obsi-border flex justify-between items-center bg-obsi-panel">
+          <div class="flex items-center gap-2 text-obsi-accent">
+            <i data-lucide="terminal" class="w-5 h-5"></i>
+            <h3 id="cmd-modal-title" class="font-bold text-white tracking-wide truncate pr-4">Knowledge Base</h3>
+          </div>
+          <button onclick="closeCmdModal()" class="text-obsi-muted hover:text-white transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
+        </div>
+        <div id="cmd-modal-content" class="p-6 text-sm text-gray-300 leading-relaxed max-h-[60vh] overflow-y-auto whitespace-pre-wrap"></div>
+      </div>
+    </div>
+
+    <!-- HEADER OVERLAY -->
+    <div class="relative z-30 p-4 md:p-8 md:pb-0 max-w-[1400px] mx-auto">
+      <header class="border-b border-obsi-border/80 pb-4 mb-4 bg-obsi-bg/80 backdrop-blur-sm rounded-xl p-4 flex flex-col md:flex-row justify-between items-start md:items-end gap-4 shadow-xl">
+        <div class="flex items-center gap-3">
+          <div class="bg-obsi-accent/10 p-2.5 rounded-xl border border-obsi-accent/20"><i data-lucide="sparkles" class="w-7 h-7 text-obsi-accent"></i></div>
+          <div>
+            <h1 class="text-3xl font-extrabold tracking-tight text-white drop-shadow-md">Stellar</h1>
+            <div class="mt-1 flex items-center gap-2 relative">
+              <i data-lucide="calendar" class="w-4 h-4 text-obsi-accent"></i>
+              
+              <!-- Custom Dropdown Menu for Weeks -->
+              <div class="relative inline-block text-left" id="custom-dropdown-container" title="Select a Week">
+                <button type="button" onclick="toggleWeekDropdown()" class="inline-flex justify-between items-center w-48 rounded-md border border-obsi-border bg-[#1a1a1a] px-3 py-1 text-sm font-semibold text-obsi-accent shadow-sm hover:border-obsi-accent/50 focus:outline-none transition-colors">
+                  <span id="dropdown-selected-text" class="truncate">Loading...</span>
+                  <i data-lucide="chevron-down" class="w-4 h-4 ml-2 opacity-70"></i>
+                </button>
+                <div id="dropdown-menu" class="hidden absolute left-0 z-50 mt-1 w-48 origin-top-left rounded-md bg-[#252525] shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none transition-all">
+                  <div class="py-1 max-h-64 overflow-y-auto custom-scrollbar" id="dropdown-options" role="menu" aria-orientation="vertical"></div>
+                </div>
+              </div>
+              <div id="loading-spinner" class="hidden text-obsi-accent ml-2 text-xs animate-pulse font-mono tracking-widest flex items-center gap-1">
+                 <i data-lucide="refresh-cw" class="w-3 h-3 animate-spin"></i> SYNCING...
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="flex items-center gap-4">
+          <!-- Live Roles/Tasks Switcher (BM, BCs, QMLs Only) -->
+          <div id="task-view-toggle-container" class="hidden flex bg-[#1a1a1a] p-1 rounded-lg border border-obsi-border shadow-inner mr-2">
+            <button onclick="toggleUserGanttPerspective('RTA')" id="perspective-btn-rta" class="px-3 py-1 rounded text-xs font-bold transition-all text-white bg-obsi-accent/20">RTA Desk</button>
+            <button onclick="toggleUserGanttPerspective('TL')" id="perspective-btn-tl" class="px-3 py-1 rounded text-xs font-bold transition-all text-obsi-muted hover:text-white">TL Desk</button>
+          </div>
+
+          <div class="flex bg-obsi-panel p-1 rounded-lg border border-obsi-border shadow-inner relative">
+            <button onclick="setView('agent-tools')" id="btn-agent-tools" class="px-4 py-1.5 rounded-md text-sm font-semibold transition-all text-obsi-muted hover:text-white">Agent Hub</button>
+            <button onclick="setView('tasks')" id="btn-tasks" class="px-4 py-1.5 rounded-md text-sm font-semibold transition-all bg-obsi-accent/20 text-obsi-accent">Gantt</button>
+            <button onclick="setView('table')" id="btn-table" class="px-4 py-1.5 rounded-md text-sm font-semibold transition-all text-obsi-muted hover:text-white">Schedule</button>
+            
+            <div class="relative ml-1" id="view-dropdown-container">
+              <button onclick="toggleViewMenu()" class="px-3 py-1.5 rounded-md text-sm font-semibold transition-all text-obsi-muted hover:text-white flex items-center justify-center hover:bg-obsi-border/30">
+                <i data-lucide="menu" class="w-4 h-4"></i>
+              </button>
+              <div id="view-dropdown" class="hidden absolute right-0 mt-2 w-48 origin-top-right rounded-md bg-[#252525] shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none transition-all z-50 border border-obsi-border">
+                <div class="py-1">
+                  <button onclick="setView('graph')" id="btn-graph" class="w-full flex items-center px-4 py-2 text-sm text-obsi-muted hover:bg-obsi-accent/20 hover:text-white transition-colors"><i data-lucide="network" class="w-4 h-4 mr-2"></i> Star Map</button>
+                  <button onclick="setView('tools')" id="btn-tools" class="w-full flex items-center px-4 py-2 text-sm text-obsi-muted hover:bg-obsi-accent/20 hover:text-white transition-colors"><i data-lucide="briefcase" class="w-4 h-4 mr-2"></i> Tool Directory</button>
+                  <button onclick="setView('mappings')" id="btn-mappings" class="w-full flex items-center px-4 py-2 text-sm text-obsi-muted hover:bg-obsi-accent/20 hover:text-white transition-colors"><i data-lucide="book-open" class="w-4 h-4 mr-2"></i> Segments</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+    </div>
+
+    <!-- MAIN CONTENT OVERLAY -->
+    <div id="main-content" class="relative z-20 px-4 md:px-8 max-w-[1400px] mx-auto transition-opacity duration-500 pb-20">
+      
+      <!-- TEAM FILTER BAR & SEARCH -->
+      <div id="filter-bar" class="hidden flex-wrap items-center gap-2 mb-4 w-full">
+        <button onclick="setTeamFilter('All')" data-team="All" class="filter-btn px-4 py-1 rounded-lg text-xs font-bold bg-obsi-accent text-white transition-all shadow-md">All Teams</button>
+        <button onclick="setTeamFilter('Management')" data-team="Management" class="filter-btn px-4 py-1 rounded-lg text-xs font-bold bg-obsi-panel text-obsi-muted border border-obsi-border hover:text-white transition-all">Management</button>
+        <button onclick="setTeamFilter('RTA')" data-team="RTA" class="filter-btn px-4 py-1 rounded-lg text-xs font-bold bg-obsi-panel text-obsi-muted border border-obsi-border hover:text-white transition-all">RTAs</button>
+        <button onclick="setTeamFilter('SME')" data-team="SME" class="filter-btn px-4 py-1 rounded-lg text-xs font-bold bg-obsi-panel text-obsi-muted border border-obsi-border hover:text-white transition-all">SMEs</button>
+        <button onclick="setTeamFilter('TL')" data-team="TL" class="filter-btn px-4 py-1 rounded-lg text-xs font-bold bg-obsi-panel text-obsi-muted border border-obsi-border hover:text-white transition-all">Team Leads</button>
+        <button onclick="setTeamFilter('Operations')" data-team="Operations" class="filter-btn px-4 py-1 rounded-lg text-xs font-bold bg-obsi-panel text-obsi-muted border border-obsi-border hover:text-white transition-all">Operations</button>
+        
+        <div class="ml-auto flex items-center relative w-64 group" title="Press '/' anywhere to open commands">
+          <i data-lucide="search" class="w-3.5 h-3.5 absolute left-2.5 text-obsi-muted pointer-events-none group-focus-within:text-obsi-accent"></i>
+          <input type="text" id="agent-search" placeholder="Search agents..." oninput="renderTable()" class="bg-[#1a1a1a] w-full border border-obsi-border rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-obsi-muted focus:outline-none focus:border-obsi-accent transition-colors shadow-inner">
+        </div>
+      </div>
+
+      <!-- AGENT TOOLS VIEW -->
+      <div id="agent-tools-container" class="hidden">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          
+          <!-- Column 1: Timers -->
+          <div class="bg-obsi-panel/90 backdrop-blur border border-obsi-border rounded-xl shadow-2xl p-6 flex flex-col">
+            <h2 class="text-lg font-extrabold text-white tracking-tight flex items-center gap-2 mb-4">
+              <i data-lucide="clock" class="w-5 h-5 text-obsi-accent"></i> Shift Timers
+            </h2>
+            <div class="flex gap-4 mb-6">
+              <button onclick="startTimer(15)" class="flex-1 bg-[#1a1a1a] border border-obsi-border hover:border-obsi-accent text-white py-4 rounded-lg font-bold text-sm transition-colors flex items-center justify-center gap-2 shadow-inner">
+                <i data-lucide="coffee" class="w-4 h-4 text-obsi-accent"></i> 15 Min Break
+              </button>
+              <button onclick="startTimer(30)" class="flex-1 bg-[#1a1a1a] border border-obsi-border hover:border-amber-500 text-white py-4 rounded-lg font-bold text-sm transition-colors flex items-center justify-center gap-2 shadow-inner">
+                <i data-lucide="pizza" class="w-4 h-4 text-amber-500"></i> 30 Min Lunch
+              </button>
+            </div>
+            <div class="flex justify-between items-center bg-obsi-bg border border-obsi-border rounded-lg p-6 mt-auto">
+              <div class="flex flex-col">
+                <span class="text-[10px] text-obsi-muted font-bold uppercase tracking-widest">Time Remaining</span>
+                <span id="timer-countdown" class="text-4xl font-mono font-extrabold text-white">00:00</span>
+              </div>
+              <div class="flex flex-col items-end">
+                <span class="text-[10px] text-obsi-muted font-bold uppercase tracking-widest">Return By (Local)</span>
+                <span id="timer-return" class="text-xl font-bold text-obsi-accent">--:--</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Column 2: Hand-Off Form -->
+          <div class="bg-obsi-panel/90 backdrop-blur border border-obsi-border rounded-xl shadow-2xl p-6 flex flex-col">
+            <h2 class="text-lg font-extrabold text-white tracking-tight flex items-center gap-2 mb-4 border-b border-obsi-border pb-3">
+              <i data-lucide="send" class="w-5 h-5 text-obsi-accent"></i> Internal Hand-Off Form
+            </h2>
+            <div class="space-y-4">
+              <div>
+                <label class="text-xs text-obsi-muted font-bold block mb-1">Agent Email *</label>
+                <input type="text" id="ho-email" readonly class="w-full bg-[#1a1a1a] border border-obsi-border/50 text-gray-500 rounded p-2 text-xs" value="Fetching...">
+              </div>
+              <div>
+                <label class="text-xs text-obsi-muted font-bold block mb-1 flex justify-between">
+                  <span>Reason for Reassigning *</span>
+                  <span id="ho-predict" class="text-obsi-accent text-[9px] uppercase tracking-widest border border-obsi-accent/30 px-1 rounded bg-obsi-accent/10">Auto-Predicted</span>
+                </label>
+                <select id="ho-reason" class="w-full bg-[#1a1a1a] border border-obsi-border focus:border-obsi-accent text-white rounded p-2 text-xs focus:outline-none">
+                  <option>1st Break</option><option>Lunch</option><option>Last Break</option>
+                  <option>End of Shift</option><option>Early Leave</option><option>Coaching</option>
+                  <option>Refresher Session</option><option>Personal</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-xs text-obsi-muted font-bold block mb-1">1st Ticket Zendesk Link *</label>
+                <input type="url" class="w-full bg-[#1a1a1a] border border-obsi-border focus:border-obsi-accent text-white rounded p-2 text-xs focus:outline-none placeholder-obsi-muted/30" placeholder="https://airalo.zendesk.com/agent/tickets/...">
+              </div>
+              <div>
+                <label class="text-xs text-obsi-muted font-bold block mb-1">2nd Ticket Zendesk Link (Optional)</label>
+                <input type="url" class="w-full bg-[#1a1a1a] border border-obsi-border focus:border-obsi-accent text-white rounded p-2 text-xs focus:outline-none placeholder-obsi-muted/30" placeholder="https://airalo.zendesk.com/agent/tickets/...">
+              </div>
+              <button onclick="submitHandoff()" class="w-full bg-obsi-accent hover:bg-obsi-accent/80 text-white font-bold py-2.5 rounded-lg text-sm transition-colors mt-2 shadow-lg">Submit Hand-Off</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- DAILY TASKS GANTT VIEW -->
+      <div id="tasks-container" class="block bg-obsi-panel/90 backdrop-blur border border-obsi-border rounded-xl shadow-2xl overflow-hidden relative">
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center p-4 border-b border-obsi-border gap-4">
+          <div class="flex items-center gap-2.5">
+            <h2 id="hub-title" class="text-lg font-extrabold text-white tracking-tight">Daily Operations Hub</h2>
+            <div id="availability-dot" class="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981]"></div>
+          </div>
+          
+          <div class="flex items-center gap-0 text-xs font-mono font-semibold bg-[#1a1a1a] p-1.5 rounded-lg border border-obsi-border shadow-inner">
+             <div class="flex flex-col items-center justify-center px-3 border-r border-obsi-border cursor-pointer hover:bg-white/5 rounded-l transition-colors group" onclick="copyHeadcount()" title="Tap to copy current Headcount">
+               <span class="text-[8px] text-obsi-muted tracking-widest uppercase group-hover:text-amber-400 transition-colors">REQ HC</span>
+               <span id="current-headcount" class="text-amber-400 text-xs font-bold">--</span>
+             </div>
+             <div class="flex flex-col items-end border-r border-obsi-border px-3">
+               <span class="text-[8px] text-obsi-muted tracking-widest uppercase">Local</span>
+               <span id="clock-local" class="text-white text-xs">--:--:--</span>
+             </div>
+             <div class="flex flex-col items-start pl-3 pr-2 cursor-pointer hover:bg-white/5 rounded-r transition-colors group" onclick="copyUTC()" title="Tap to copy HH:MM UTC">
+               <span class="text-[8px] text-obsi-muted tracking-widest uppercase group-hover:text-obsi-accent transition-colors">UTC</span>
+               <span id="clock-utc" class="text-obsi-accent text-xs">--:--:--</span>
+             </div>
+          </div>
+        </div>
+
+        <div class="overflow-x-auto pb-0 custom-scrollbar relative">
+          <div class="min-w-[1000px] relative">
+             <div class="flex w-full h-7 border-b border-obsi-border bg-[#1a1a1a]">
+               <div class="w-[200px] shrink-0 sticky left-0 bg-[#1a1a1a] border-r border-obsi-border z-40 p-2 flex items-end">
+                 <span class="text-[9px] font-bold text-obsi-muted uppercase tracking-widest">Task List</span>
+               </div>
+               <div class="flex-1 relative bg-[#1a1a1a]" id="gantt-headers"></div>
+             </div>
+             
+             <div id="gantt-bg-grid" class="absolute top-7 bottom-8 right-0 left-[200px] z-0 pointer-events-none"></div>
+             
+             <div id="current-time-line-container" class="absolute top-7 bottom-8 right-0 left-[200px] z-30 pointer-events-none overflow-hidden">
+                 <div id="current-time-line" class="absolute top-0 bottom-0 hidden w-[2px] bg-rose-500 shadow-[0_0_12px_#f43f5e] transition-all duration-1000"></div>
+             </div>
+
+             <div id="gantt-body" class="relative z-10 w-full flex flex-col pb-1"></div>
+             
+             <div class="flex w-full h-8 border-t border-obsi-border bg-[#1a1a1a]">
+                <div class="w-[200px] shrink-0 sticky left-0 bg-[#1a1a1a] border-r border-obsi-border z-40 p-2 flex items-center justify-end">
+                   <span class="text-[9px] font-bold text-obsi-muted uppercase tracking-widest">Capacity Tracker</span>
+                </div>
+                <div class="flex-1 relative flex items-center" id="capacity-timeline"></div>
+             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TOOL DIRECTORY TAB -->
+      <div id="tools-container" class="hidden">
+         <div class="bg-obsi-panel/90 backdrop-blur border border-obsi-border rounded-xl shadow-2xl p-6">
+            <div class="border-b border-obsi-border pb-4 mb-6 flex items-center gap-3">
+              <div class="p-2 bg-blue-500/20 rounded-lg"><i data-lucide="briefcase" class="w-5 h-5 text-blue-400"></i></div>
+              <h2 class="text-xl font-extrabold text-white tracking-tight">Everyday Tool Directory</h2>
+            </div>
+            <div id="tools-grid" class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
+               <!-- Tools map here -->
+            </div>
+         </div>
+      </div>
+
+      <!-- MAPPINGS TAB -->
+      <div id="mappings-container" class="hidden bg-obsi-panel/90 backdrop-blur border border-obsi-border rounded-xl shadow-2xl overflow-hidden relative">
+        <div class="p-4 border-b border-obsi-border flex justify-between items-center">
+          <h2 class="text-lg font-extrabold text-white tracking-tight">Segment Mapping Dictionary</h2>
+          <span class="text-[10px] text-obsi-muted font-bold uppercase tracking-widest">Tap row to copy segment</span>
+        </div>
+        <div class="overflow-x-auto p-4">
+          <table class="w-full text-center border-collapse bg-[#1a1a1a] rounded-lg overflow-hidden border border-obsi-border">
+            <thead>
+              <tr class="bg-[#222222] border-b border-obsi-border">
+                <th class="px-3 py-2 text-xs font-bold text-obsi-muted uppercase tracking-widest text-center w-1/2">Segment</th>
+                <th class="px-3 py-2 text-xs font-bold text-obsi-muted uppercase tracking-widest border-l border-obsi-border/50 text-center w-1/2">Reason / Description</th>
+              </tr>
+            </thead>
+            <tbody class="text-sm">
+              <tr class="border-b border-obsi-border/30 hover:bg-obsi-border/20 transition-colors cursor-pointer" onclick="copySegment('WW-ABSENCE_NO_REASON-UU')"><td class="px-3 py-1.5 font-mono text-obsi-accent text-[12px] text-center">WW-ABSENCE_NO_REASON-UU</td><td class="px-3 py-1.5 text-white border-l border-obsi-border/50 text-center text-[12px]">NS</td></tr>
+              <tr class="border-b border-obsi-border/30 hover:bg-obsi-border/20 transition-colors cursor-pointer" onclick="copySegment('WW-ABSENCE_REASONABLE-UP')"><td class="px-3 py-1.5 font-mono text-obsi-accent text-[12px] text-center">WW-ABSENCE_REASONABLE-UP</td><td class="px-3 py-1.5 text-white border-l border-obsi-border/50 text-center text-[12px]">PUPL</td></tr>
+              <tr class="border-b border-obsi-border/30 hover:bg-obsi-border/20 transition-colors cursor-pointer" onclick="copySegment('WW-ABSENCE_REASONABLE-PU')"><td class="px-3 py-1.5 font-mono text-obsi-accent text-[12px] text-center">WW-ABSENCE_REASONABLE-PU</td><td class="px-3 py-1.5 text-white border-l border-obsi-border/50 text-center text-[12px]">CL</td></tr>
+              <tr class="border-b border-obsi-border/30 hover:bg-obsi-border/20 transition-colors cursor-pointer" onclick="copySegment('WW-LATE-UU')"><td class="px-3 py-1.5 font-mono text-obsi-accent text-[12px] text-center">WW-LATE-UU</td><td class="px-3 py-1.5 text-white border-l border-obsi-border/50 text-center text-[12px]">LATE / Logout during shift</td></tr>
+              <tr class="border-b border-obsi-border/30 hover:bg-obsi-border/20 transition-colors cursor-pointer" onclick="copySegment('WW-SICKNESS-UU')"><td class="px-3 py-1.5 font-mono text-obsi-accent text-[12px] text-center">WW-SICKNESS-UU</td><td class="px-3 py-1.5 text-white border-l border-obsi-border/50 text-center text-[12px]">SICK</td></tr>
+              <tr class="border-b border-obsi-border/30 hover:bg-obsi-border/20 transition-colors cursor-pointer" onclick="copySegment('WW-TECHNICAL_ISSUE-PU')"><td class="px-3 py-1.5 font-mono text-obsi-accent text-[12px] text-center">WW-TECHNICAL_ISSUE-PU</td><td class="px-3 py-1.5 text-white border-l border-obsi-border/50 text-center text-[12px]">TECH ISSUE</td></tr>
+              <tr class="border-b border-obsi-border/30 hover:bg-obsi-border/20 transition-colors cursor-pointer" onclick="copySegment('WW-VACATION-PU')"><td class="px-3 py-1.5 font-mono text-obsi-accent text-[12px] text-center">WW-VACATION-PU</td><td class="px-3 py-1.5 text-white border-l border-obsi-border/50 text-center text-[12px]">ANX</td></tr>
+              <tr class="border-b border-obsi-border/30 hover:bg-obsi-border/20 transition-colors cursor-pointer" onclick="copySegment('WW-VACATION-PP')"><td class="px-3 py-1.5 font-mono text-obsi-accent text-[12px] text-center">WW-VACATION-PP</td><td class="px-3 py-1.5 text-white border-l border-obsi-border/50 text-center text-[12px]">AN</td></tr>
+              <tr class="border-b border-obsi-border/30 hover:bg-obsi-border/20 transition-colors cursor-pointer" onclick="copySegment('WW-WORK_AS_COACHER-PU')"><td class="px-3 py-1.5 font-mono text-obsi-accent text-[12px] text-center">WW-WORK_AS_COACHER-PU</td><td class="px-3 py-1.5 text-white border-l border-obsi-border/50 text-center text-[12px]">Support floor unplanned</td></tr>
+              <tr class="border-b border-obsi-border/30 hover:bg-obsi-border/20 transition-colors cursor-pointer" onclick="copySegment('WW-GO_HOME_EARLY-UU')"><td class="px-3 py-1.5 font-mono text-obsi-accent text-[12px] text-center">WW-GO_HOME_EARLY-UU</td><td class="px-3 py-1.5 text-white border-l border-obsi-border/50 text-center text-[12px]">EARLY LEAVE</td></tr>
+              <tr class="border-b border-obsi-border/30 hover:bg-obsi-border/20 transition-colors cursor-pointer" onclick="copySegment('WW-ABSENCE_REASONABLE-UU')"><td class="px-3 py-1.5 font-mono text-obsi-accent text-[12px] text-center">WW-ABSENCE_REASONABLE-UU</td><td class="px-3 py-1.5 text-white border-l border-obsi-border/50 text-center text-[12px]">UPL</td></tr>
+              <tr class="border-b border-obsi-border/30 hover:bg-obsi-border/20 transition-colors cursor-pointer" onclick="copySegment('WW-LATE-PU')"><td class="px-3 py-1.5 font-mono text-obsi-accent text-[12px] text-center">WW-LATE-PU</td><td class="px-3 py-1.5 text-white border-l border-obsi-border/50 text-center text-[12px]">Late due to bus</td></tr>
+              <tr class="border-b border-obsi-border/30 hover:bg-obsi-border/20 transition-colors cursor-pointer" onclick="copySegment('WW-WORK_AS_COACHER-PP')"><td class="px-3 py-1.5 font-mono text-obsi-accent text-[12px] text-center">WW-WORK_AS_COACHER-PP</td><td class="px-3 py-1.5 text-white border-l border-obsi-border/50 text-center text-[12px]">Support floor planned & SME</td></tr>
+              <tr class="border-b border-obsi-border/30 hover:bg-obsi-border/20 transition-colors cursor-pointer" onclick="copySegment('WW-COACHING_TWW-PU')"><td class="px-3 py-1.5 font-mono text-obsi-accent text-[12px] text-center">WW-COACHING_TWW-PU</td><td class="px-3 py-1.5 text-white border-l border-obsi-border/50 text-center text-[12px]">Coaching</td></tr>
+              <tr class="border-b border-obsi-border/30 hover:bg-obsi-border/20 transition-colors cursor-pointer" onclick="copySegment('WW-TRAINING_TRANSCOM-PU')"><td class="px-3 py-1.5 font-mono text-obsi-accent text-[12px] text-center">WW-TRAINING_TRANSCOM-PU</td><td class="px-3 py-1.5 text-white border-l border-obsi-border/50 text-center text-[12px]">Training</td></tr>
+              <tr class="border-b border-obsi-border/30 hover:bg-obsi-border/20 transition-colors cursor-pointer" onclick="copySegment('WW-MEETING_TWW-PU')"><td class="px-3 py-1.5 font-mono text-obsi-accent text-[12px] text-center">WW-MEETING_TWW-PU</td><td class="px-3 py-1.5 text-white border-l border-obsi-border/50 text-center text-[12px]">Meeting</td></tr>
+              <tr class="hover:bg-obsi-border/20 transition-colors cursor-pointer" onclick="copySegment('WW-SICKNESS-PP')"><td class="px-3 py-1.5 font-mono text-obsi-accent text-[12px] text-center">WW-SICKNESS-PP</td><td class="px-3 py-1.5 text-white border-l border-obsi-border/50 text-center text-[12px]">PSK</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- NEAT TABLE VIEW -->
+      <div id="table-container" class="hidden bg-obsi-panel/90 backdrop-blur border border-obsi-border rounded-xl shadow-2xl overflow-hidden relative">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse min-w-[1000px]">
+            <thead>
+              <tr id="table-header-row"></tr>
+            </thead>
+            <tbody id="table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    
+    <script>
+      lucide.createIcons();
+      let completeData = {};
+      let selectedWeek = "";
+      let globalAgents = [];
+      let globalDates = [];
+      
+      let allTasksData = { RTA: [], TL: [] };
+      let allCapacityData = { RTA: [], TL: [] };
+      let currentGanttPerspective = "RTA"; 
+      
+      let userRole = "Agent"; 
+      let userEmailVal = "";
+      
+      let hcIntervals = [];
+      let hcValues = [];
+      let globalTools = [];
+      let globalCommands = [];
+      
+      let dynamicTasks = []; 
+      let currentMode = 'agent-tools'; 
+      let currentTeamFilter = 'All'; 
+
+      // --- INIT & CACHE LOGIC ---
+      function initializeApp() {
+         const cached = localStorage.getItem('stellar_dashboard_cache_v4');
+         if (cached) {
+            try {
+               const parsedData = JSON.parse(cached);
+               onDataReceived(parsedData, true);
+            } catch(e) { console.error("Cache read error", e); }
+         } else {
+            document.getElementById('loading-spinner').classList.remove('hidden');
+         }
+
+         google.script.run
+          .withSuccessHandler(data => {
+              localStorage.setItem('stellar_dashboard_cache_v4', JSON.stringify(data));
+              onDataReceived(data, false);
+          })
+          .withFailureHandler(err => {
+              if(!cached) {
+                document.getElementById('dropdown-selected-text').innerText = 'Sync Failed';
+                let spinner = document.getElementById('loading-spinner');
+                spinner.innerHTML = '<i data-lucide="x-circle" class="w-3 h-3"></i> ERROR';
+                spinner.classList.replace('text-obsi-accent', 'text-rose-500');
+                spinner.classList.remove('hidden');
+                lucide.createIcons();
+              }
+              console.error("Fetch Data Failed:", err);
+          })
+          .getDashboardData();
+      }
+      
+      // Wait for DOM
+      document.addEventListener('DOMContentLoaded', initializeApp);
+
+      // --- KONAMI CODE EASTER EGG ---
+      let konamiCode = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
+      let konamiIndex = 0;
+      let pingInterval;
+      document.addEventListener('keydown', function(e) {
+          if (e.key === konamiCode[konamiIndex]) {
+              konamiIndex++;
+              if (konamiIndex === konamiCode.length) {
+                  openDevScreen();
+                  konamiIndex = 0;
+              }
+          } else {
+              konamiIndex = 0;
+          }
+      });
+      function openDevScreen() {
+          document.getElementById('dev-screen').classList.remove('hidden');
+          const log = document.getElementById('ping-log');
+          log.innerHTML = '';
+          pingInterval = setInterval(() => {
+             let ms = Math.floor(Math.random() * 50) + 12;
+             let html = `<div>Reply from 192.168.1.1: bytes=32 time=${ms}ms TTL=118</div>`;
+             log.insertAdjacentHTML('beforeend', html);
+             log.scrollTop = log.scrollHeight;
+             if(log.childElementCount > 30) log.removeChild(log.firstChild);
+          }, 400);
+      }
+      function closeDevScreen() {
+          document.getElementById('dev-screen').classList.add('hidden');
+          clearInterval(pingInterval);
+      }
+
+      // --- COMMAND PALETTE LOGIC (Minecraft Style) ---
+      document.addEventListener('keydown', function(e) {
+          if (e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+              e.preventDefault();
+              openMcCommandPalette();
+          } else if (e.key === 'Escape') {
+              closeMcCommandPalette();
+              closeCmdModal();
+          }
+      });
+
+      function openMcCommandPalette() {
+          const overlay = document.getElementById('mc-command-overlay');
+          const input = document.getElementById('mc-cmd-input');
+          overlay.classList.remove('hidden');
+          input.value = '';
+          updateMcSuggestions('');
+          setTimeout(() => input.focus(), 50);
+      }
+
+      function closeMcCommandPalette() {
+          document.getElementById('mc-command-overlay').classList.add('hidden');
+      }
+
+      document.getElementById('mc-cmd-input').addEventListener('input', function(e) {
+          updateMcSuggestions(e.target.value);
+      });
+
+      document.getElementById('mc-cmd-input').addEventListener('keydown', function(e) {
+          if (e.key === 'Enter') {
+              executeMcCommand(this.value);
+          }
+      });
+
+      function updateMcSuggestions(val) {
+          const container = document.getElementById('mc-suggestions');
+          if (!val.trim()) {
+              container.innerHTML = `<div class="text-xs text-obsi-muted px-2 py-1 italic">Type something to search commands or Wikipedia...</div>`;
+              return;
+          }
+          
+          let query = val.startsWith('/') ? val.substring(1).toLowerCase() : val.toLowerCase();
+          let filtered = globalCommands.filter(c => c.cmd.toLowerCase() === query || c.cmd.toLowerCase().includes(query) || c.desc.toLowerCase().includes(query));
+          
+          if (filtered.length > 0) {
+              container.innerHTML = filtered.map(c => `
+                  <div onclick="executeMcCommand('${c.cmd.replace(/'/g, "\\'")}')" class="cursor-pointer px-3 py-2 rounded hover:bg-obsi-border/50 flex flex-col gap-0.5 group transition-colors">
+                      <span class="text-obsi-accent font-mono font-bold text-xs group-hover:text-white">/${c.cmd}</span>
+                      <span class="text-gray-400 text-[10px] truncate">${c.desc}</span>
+                  </div>
+              `).join('');
+          } else {
+              container.innerHTML = `
+                  <div class="cursor-pointer px-3 py-2 rounded hover:bg-obsi-border/50 text-xs text-gray-300 transition-colors flex items-center gap-2" onclick="executeMcCommand('${val.replace(/'/g, "\\'")}')">
+                      <i data-lucide="globe" class="w-3.5 h-3.5 text-obsi-muted"></i>
+                      <span>Search Wiki/Answers for: <strong class="text-white">"${val}"</strong></span>
+                  </div>
+              `;
+              lucide.createIcons();
+          }
+      }
+
+      async function executeMcCommand(val) {
+          val = val.trim();
+          if (!val) return;
+          closeMcCommandPalette();
+          
+          let query = val.startsWith('/') ? val.substring(1).toLowerCase() : val.toLowerCase();
+          
+          let rawQuery = query;
+          const questionsPrefixes = ["who is ", "what is ", "tell me about ", "where is ", "how does ", "what are ", "who was "];
+          questionsPrefixes.forEach(prefix => {
+              if (rawQuery.startsWith(prefix)) {
+                  rawQuery = rawQuery.replace(prefix, "").trim();
+              }
+          });
+          
+          let cmdObj = globalCommands.find(c => c.cmd.toLowerCase() === query);
+          
+          if (cmdObj) {
+              showCmdModal(`/${cmdObj.cmd}`, `<div class="text-gray-200 text-sm leading-relaxed">${cmdObj.content}</div>`);
+          } else {
+              showCmdModal(`Search: ${val}`, `<div class="flex items-center gap-2 text-obsi-muted"><i data-lucide="loader-2" class="w-4 h-4 animate-spin text-obsi-accent"></i> Searching Live Database & Wikipedia RestAPI...</div>`);
+              lucide.createIcons();
+              
+              try {
+                  let res = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(rawQuery)}`);
+                  if (res.ok) {
+                      let data = await res.json();
+                      let extract = data.extract || "No direct answers found on database or wikipedia.";
+                      let link = data.content_urls ? data.content_urls.desktop.page : "#";
+                      
+                      showCmdModal(
+                          data.title || val, 
+                          `<div class="text-[10px] text-obsi-muted uppercase tracking-widest font-bold mb-3 border-b border-obsi-border/50 pb-1.5 flex items-center gap-1"><i data-lucide="book" class="w-3 h-3"></i> Wikipedia Answer:</div>
+                           <div class="text-gray-200 text-sm leading-relaxed mb-4">${extract}</div>
+                           <a href="${link}" target="_blank" class="inline-flex items-center gap-1 px-3 py-1.5 bg-obsi-border/30 hover:bg-obsi-accent/20 text-obsi-accent rounded-lg text-xs font-bold transition-colors shadow-sm">
+                              Read Full Article <i data-lucide="external-link" class="w-3 h-3"></i>
+                           </a>`
+                      );
+                      lucide.createIcons();
+                  } else {
+                      showCmdModal(`Search: ${val}`, `<div class="text-rose-400 text-sm">No exact Wiki rest-entry matched your search term. Try simpler wording.</div>`);
+                  }
+              } catch (e) {
+                  showCmdModal(`Error`, `<div class="text-rose-400 text-sm">Failed to connect to RestAPI endpoints.</div>`);
+              }
+          }
+      }
+
+      function showCmdModal(title, htmlContent) {
+          document.getElementById('cmd-modal-title').innerText = title;
+          document.getElementById('cmd-modal-content').innerHTML = htmlContent;
+          document.getElementById('cmd-modal').classList.remove('hidden');
+      }
+      function closeCmdModal() { document.getElementById('cmd-modal').classList.add('hidden'); }
+
+      // --- Tools Logic ---
+      function renderTools() {
+          const grid = document.getElementById('tools-grid');
+          if (!globalTools || globalTools.length === 0) {
+              grid.innerHTML = `<div class="col-span-full text-obsi-muted text-sm italic">No directory items configured. Populate tab sheet "Stellar_Tools" to list elements.</div>`;
+              return;
+          }
+          grid.innerHTML = globalTools.map(t => `
+             <a href="${t.url}" target="_blank" class="group bg-[#1a1a1a] border border-obsi-border hover:border-obsi-accent/50 rounded-lg p-4 transition-all hover:shadow-[0_4px_12px_rgba(168,130,255,0.15)] flex flex-col justify-between h-full min-h-[100px]">
+                <div>
+                   <h3 class="font-bold text-sm text-white group-hover:text-obsi-accent transition-colors">${t.name}</h3>
+                   ${t.desc ? `<p class="text-xs text-obsi-muted mt-1 line-clamp-2">${t.desc}</p>` : ''}
+                </div>
+                <div class="mt-3 flex justify-end">
+                   <i data-lucide="external-link" class="w-4 h-4 text-obsi-muted group-hover:text-obsi-accent transition-colors"></i>
+                </div>
+             </a>
+          `).join('');
+          lucide.createIcons();
+      }
+
+      let shiftTimerInterval;
+      function startTimer(minutes) {
+          clearInterval(shiftTimerInterval);
+          let endTime = new Date();
+          endTime.setMinutes(endTime.getMinutes() + minutes);
+
+          let retH = endTime.getHours() % 12 || 12;
+          let retM = endTime.getMinutes().toString().padStart(2, '0');
+          let retA = endTime.getHours() >= 12 ? 'PM' : 'AM';
+          document.getElementById('timer-return').innerText = `${retH}:${retM} ${retA}`;
+
+          shiftTimerInterval = setInterval(() => {
+              let now = new Date();
+              let diff = endTime - now;
+              if (diff <= 0) {
+                  clearInterval(shiftTimerInterval);
+                  document.getElementById('timer-countdown').innerText = "00:00";
+                  document.getElementById('timer-countdown').classList.add('text-rose-500');
+                  showToast("Break/Lunch time is over!");
+                  return;
+              }
+              document.getElementById('timer-countdown').classList.remove('text-rose-500');
+              let m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)).toString().padStart(2, '0');
+              let s = Math.floor((diff % (1000 * 60)) / 1000).toString().padStart(2, '0');
+              document.getElementById('timer-countdown').innerText = `${m}:${s}`;
+          }, 1000);
+      }
+
+      function submitHandoff() { showToast("Handoff sent to workflow (Mock)"); }
+
+      function predictHandoffReason() {
+          let h = new Date().getHours();
+          let rBox = document.getElementById('ho-reason');
+          if (h >= 10 && h <= 12) rBox.value = "1st Break";
+          else if (h > 12 && h <= 15) rBox.value = "Lunch";
+          else if (h > 15 && h <= 18) rBox.value = "Last Break";
+          else if (h >= 19) rBox.value = "End of Shift";
+      }
+
+      // --- Clipboard Utilities ---
+      function showToast(message) {
+          const toast = document.getElementById('toast');
+          toast.innerText = message;
+          toast.className = 'show';
+          setTimeout(() => { toast.className = toast.className.replace('show', ''); }, 2500);
+      }
+      function copyToClipboard(text, successMessage) {
+          const textArea = document.createElement("textarea");
+          textArea.value = text;
+          textArea.style.top = "0"; textArea.style.left = "0"; textArea.style.position = "fixed";
+          document.body.appendChild(textArea); textArea.focus(); textArea.select();
+          try { document.execCommand('copy'); showToast(successMessage); } catch (err) { }
+          document.body.removeChild(textArea);
+      }
+      function copyUTC() {
+          const now = new Date();
+          const uH = now.getUTCHours().toString().padStart(2, '0');
+          const uM = now.getUTCMinutes().toString().padStart(2, '0');
+          copyToClipboard(`${uH}:${uM}`, `Copied UTC Time: ${uH}:${uM}`);
+      }
+      function copyHeadcount() {
+          const hc = document.getElementById('current-headcount').innerText;
+          if (hc && hc !== '--') copyToClipboard(hc, `Copied Headcount: ${hc}`);
+      }
+      function copySegment(segmentText) { copyToClipboard(segmentText, `Copied: ${segmentText}`); }
+
+      // --- Custom Dropdowns Logic ---
+      function toggleWeekDropdown() {
+        document.getElementById('dropdown-menu').classList.toggle('hidden');
+        document.getElementById('view-dropdown').classList.add('hidden'); 
+      }
+      function toggleViewMenu() {
+        document.getElementById('view-dropdown').classList.toggle('hidden');
+        document.getElementById('dropdown-menu').classList.add('hidden'); 
+      }
+      function selectWeek(weekValue, displayName) {
+        document.getElementById('dropdown-selected-text').innerText = displayName;
+        selectedWeek = weekValue;
+        document.getElementById('dropdown-menu').classList.add('hidden');
+        
+        let firstDate = (completeData[weekValue] && completeData[weekValue].dates) ? completeData[weekValue].dates[0] : "";
+        document.getElementById('custom-dropdown-container').setAttribute('title', `Starting: ${firstDate || 'Unknown'}`);
+        updateViewForWeek();
+      }
+
+      document.addEventListener('click', function(event) {
+        if (!document.getElementById('custom-dropdown-container').contains(event.target)) document.getElementById('dropdown-menu').classList.add('hidden');
+        if (!document.getElementById('view-dropdown-container').contains(event.target)) document.getElementById('view-dropdown').classList.add('hidden');
+        if (event.target.id !== 'mc-cmd-input' && !document.getElementById('mc-suggestions').contains(event.target)) closeMcCommandPalette();
+      });
+
+      // --- CLOCK & HEADCOUNT LOGIC ---
+      function updateClocksAndHC() {
+        const now = new Date();
+        
+        // Clocks
+        let lH = now.getHours(), lM = now.getMinutes().toString().padStart(2, '0'), lS = now.getSeconds().toString().padStart(2, '0');
+        let lAmpm = lH >= 12 ? 'PM' : 'AM', lDisp = lH % 12 || 12;
+        document.getElementById('clock-local').innerText = `${lDisp}:${lM}:${lS} ${lAmpm}`;
+
+        let uH = now.getUTCHours(), uM = now.getUTCMinutes().toString().padStart(2, '0'), uS = now.getUTCSeconds().toString().padStart(2, '0');
+        let uAmpm = uH >= 12 ? 'PM' : 'AM', uDisp = uH % 12 || 12;
+        document.getElementById('clock-utc').innerText = `${uDisp}:${uM}:${uS} ${uAmpm}`;
+
+        if (hcIntervals && hcIntervals.length > 0 && hcValues && hcValues.length > 0) {
+            let minBucket = now.getMinutes() >= 30 ? "30" : "00";
+            let targetTimeStr = `${now.getHours()}:${minBucket}`; // e.g. "8:30"
+            
+            let idx = hcIntervals.findIndex(v => {
+                let safeSheetVal = String(v).replace(/^0/, ''); // Strip leading zeros safely
+                return safeSheetVal === targetTimeStr;
+            });
+            
+            if (idx !== -1 && hcValues[idx] !== undefined && hcValues[idx] !== '') {
+                document.getElementById('current-headcount').innerText = hcValues[idx];
+            } else {
+                document.getElementById('current-headcount').innerText = '--';
+            }
+        }
+      }
+      setInterval(updateClocksAndHC, 1000);
+      updateClocksAndHC();
+
+      // --- Perspective toggles ---
+      function toggleUserGanttPerspective(p) {
+          currentGanttPerspective = p;
+          
+          if(document.getElementById('perspective-btn-rta')) {
+             document.getElementById('perspective-btn-rta').className = p === 'RTA' ? 'px-3 py-1 rounded text-xs font-bold transition-all text-white bg-obsi-accent/20' : 'px-3 py-1 rounded text-xs font-bold transition-all text-obsi-muted hover:text-white';
+             document.getElementById('perspective-btn-tl').className = p === 'TL' ? 'px-3 py-1 rounded text-xs font-bold transition-all text-white bg-obsi-accent/20' : 'px-3 py-1 rounded text-xs font-bold transition-all text-obsi-muted hover:text-white';
+          }
+          
+          document.getElementById('hub-title').innerText = p === 'RTA' ? 'Daily Operations Hub (RTA)' : 'Daily Operations Hub (TL)';
+          
+          dynamicTasks = allTasksData[p] || [];
+          globalCapacity = allCapacityData[p] || [];
+          
+          buildGanttGrid();
+      }
+
+      function parseTimeToDecimal(timeStr) {
+        if(!timeStr) return 0;
+        const parts = timeStr.trim().split(/(AM|PM)/i);
+        let [hours, minutes] = parts[0].trim().split(':').map(Number);
+        if (hours === 12) hours = 0;
+        if (parts.length > 1 && parts[1].toUpperCase() === 'PM') hours += 12;
+        return hours + ((minutes || 0) / 60);
+      }
+
+      async function toggleTask(id, title) {
+         let action = "";
+         let isDim = title.toLowerCase().includes('workflow') || title.toLowerCase().includes('productive');
+         
+         if(window.completedTasksArray.includes(id)) {
+             window.completedTasksArray = window.completedTasksArray.filter(x => x !== id);
+             action = "Uncompleted";
+         } else {
+             window.completedTasksArray.push(id);
+             action = "Completed";
+             
+             if (!isDim && typeof confetti === 'function') {
+                 confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 }, colors: ['#a882ff', '#ffffff', '#10b981'] });
+             }
+         }
+         
+         updateTaskVisuals();
+         
+         // Push securely to Firestore
+         if (window.todayDocRef && window.fbSetDoc) {
+             await window.fbSetDoc(window.todayDocRef, { completed: window.completedTasksArray }, { merge: true });
+         } else {
+             localStorage.setItem('stellar_tasks_done', JSON.stringify(window.completedTasksArray));
+         }
+         
+         google.script.run.logTaskHistory(id, title, action);
+      }
+
+      function updateTaskVisuals() {
+        const now = new Date(); 
+        const decimalTime = now.getHours() + (now.getMinutes() / 60);
+        
+        dynamicTasks.forEach(task => {
+           let bar = document.getElementById(`bar-${task.id}`);
+           let rowContainer = document.getElementById(`row-${task.id}`);
+           let iconBox = document.getElementById(`iconbox-${task.id}`);
+           let titleSpan = document.getElementById(`title-${task.id}`);
+           if (!bar || task.startDec === undefined) return;
+           
+           let isDone = window.completedTasksArray.includes(task.id);
+           let isActive = (decimalTime >= task.startDec && decimalTime <= task.endDec);
+           let isDim = task.title.toLowerCase().includes('workflow') || task.title.toLowerCase().includes('productive');
+           
+           bar.className = `absolute top-1 bottom-1 rounded cursor-pointer transition-all duration-300 flex items-center justify-center overflow-hidden border`;
+           if (isActive && !isDone) {
+               bar.classList.add('bg-white', 'border-white', 'shadow-[0_0_15px_rgba(255,255,255,0.8)]', 'z-20');
+           } else {
+               if (isDone) {
+                   bar.classList.add('bg-[#333]', 'border-obsi-border', 'opacity-50');
+               } else if (isDim) {
+                   bar.classList.add('bg-obsi-accent/30', 'border-obsi-accent/20');
+               } else {
+                   bar.classList.add('bg-obsi-accent', 'border-obsi-accent/60', 'shadow-[0_0_10px_rgba(168,130,255,0.3)]');
+               }
+           }
+
+           if (iconBox && titleSpan && rowContainer) {
+               rowContainer.className = `w-[200px] shrink-0 sticky left-0 group-hover:bg-[#2a2a2a] border-r border-obsi-border z-40 flex items-center px-3 gap-2.5 cursor-pointer shadow-[2px_0_8px_-2px_rgba(0,0,0,0.3)] transition-colors ${isDone ? 'bg-[#1a1a1a]' : 'bg-obsi-panel'}`;
+               iconBox.className = `w-3.5 h-3.5 border rounded flex-shrink-0 flex items-center justify-center transition-colors ${isDone ? 'bg-obsi-accent border-obsi-accent' : 'border-obsi-muted'}`;
+               iconBox.innerHTML = isDone ? `<svg class="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>` : '';
+               titleSpan.className = `text-[11px] font-bold truncate transition-colors ${isDone ? 'line-through text-obsi-muted/50' : 'text-white'}`;
+               titleSpan.innerText = task.title;
+           }
+        });
+      }
+
+      function buildGanttGrid() {
+        let bgGridHtml = '';
+        let headerHtml = '';
+
+        for(let i=0; i<=48; i++) {
+           let leftP = (i / 48) * 100;
+           let isHour = i % 2 === 0;
+           let lineStyle = isHour ? 'border-obsi-border/30' : 'border-obsi-border/10 border-dashed';
+           bgGridHtml += `<div class="absolute top-0 bottom-0 border-l ${lineStyle}" style="left: ${leftP}%; width: 1px;"></div>`;
+           
+           if (isHour) {
+               let hr = i / 2;
+               let displayHr = hr % 12 || 12;
+               let ampm = hr < 12 ? 'A' : 'P';
+               let transform = i === 0 ? 'translateX(0)' : (i >= 48 ? 'translateX(-100%)' : 'translateX(-50%)');
+               headerHtml += `<div class="absolute bottom-1 text-[8px] text-obsi-muted/50 font-bold" style="left: ${leftP}%; transform: ${transform};">${displayHr}${ampm}</div>`;
+           }
+        }
+        
+        document.getElementById('gantt-bg-grid').innerHTML = bgGridHtml;
+        document.getElementById('gantt-headers').innerHTML = headerHtml;
+
+        let rowsHtml = '';
+        
+        if (dynamicTasks && dynamicTasks.length > 0) {
+            dynamicTasks.forEach((task) => {
+               let timeStr = String(task.time || "");
+               let times = timeStr.split('-');
+               if(times.length < 2) return; 
+
+               task.startDec = parseTimeToDecimal(times[0]); 
+               task.endDec = parseTimeToDecimal(times[1]);
+               if (task.endDec <= task.startDec) task.endDec = task.startDec + 0.166; 
+
+               let leftPercent = (task.startDec / 24) * 100;
+               let widthPercent = ((task.endDec - task.startDec) / 24) * 100;
+               
+               rowsHtml += `
+                 <div class="flex w-full h-8 border-b border-obsi-border/20 group hover:bg-obsi-border/10 transition-colors" onclick="toggleTask('${task.id}', '${task.title}')">
+                   <div id="row-${task.id}">
+                     <div id="iconbox-${task.id}"></div>
+                     <div class="flex flex-col min-w-0">
+                        <span id="title-${task.id}" title="${task.title} (${task.time})"></span>
+                     </div>
+                   </div>
+                   <div class="flex-1 relative pointer-events-none">
+                     <div id="bar-${task.id}" class="absolute" style="left: ${leftPercent}%; width: max(0.5%, ${widthPercent}%);"></div>
+                   </div>
+                 </div>
+               `;
+            });
+        } else {
+            rowsHtml = `
+            <div class="flex w-full h-8 border-b border-obsi-border/10">
+                <div class="w-[200px] shrink-0 sticky left-0 bg-[#1a1a1a] border-r border-obsi-border z-40 flex items-center px-3">
+                    <div class="h-2 w-24 bg-obsi-border/30 rounded animate-pulse"></div>
+                </div>
+                <div class="flex-1"></div>
+            </div>`;
+        }
+        
+        document.getElementById('gantt-body').innerHTML = rowsHtml;
+        
+        const rtaStatus = (typeof globalCapacity !== 'undefined' && globalCapacity.length === 48) ? globalCapacity : Array(48).fill("Free");
+        let capHtml = '';
+        rtaStatus.forEach((status, idx) => {
+            let leftP = (idx / 48) * 100;
+            let widthP = 100 / 48;
+            let color = status === 'Busy' ? 'bg-rose-500 shadow-[0_0_8px_#f43f5e]' :
+                        status === 'Relatively Free' ? 'bg-amber-400 shadow-[0_0_8px_#fbbf24]' :
+                        'bg-emerald-500 shadow-[0_0_8px_#10b981]';
+            
+            capHtml += `<div class="absolute top-0 bottom-0 flex items-center justify-center" style="left: ${leftP}%; width: ${widthP}%;" title="${status}">
+                          <div class="w-1.5 h-1.5 rounded-full ${color} opacity-80"></div>
+                        </div>`;
+        });
+        document.getElementById('capacity-timeline').innerHTML = capHtml;
+
+        if (dynamicTasks.length > 0) {
+            updateTaskVisuals();
+            updateCurrentTimeLine();
+        }
+        
+        if (!window.ganttTimer) {
+           window.ganttTimer = setInterval(() => {
+               updateCurrentTimeLine();
+               if(dynamicTasks.length > 0) updateTaskVisuals(); 
+           }, 30000); 
+        }
+      }
+
+      function updateCurrentTimeLine() {
+        if (!dynamicTasks || dynamicTasks.length === 0) return;
+        const now = new Date(); 
+        const decimalTime = now.getHours() + (now.getMinutes() / 60);
+        const percent = (decimalTime / 24) * 100;
+        
+        const line = document.getElementById('current-time-line');
+        if (line) {
+          line.style.left = `${percent}%`;
+          line.classList.remove('hidden');
+        }
+
+        let actualCapList = globalCapacity;
+        if (typeof actualCapList !== 'undefined' && actualCapList.length === 48) {
+            let currentIntervalIndex = (now.getHours() * 2) + Math.floor(now.getMinutes() / 30);
+            let currentStatus = actualCapList[currentIntervalIndex] || 'Free';
+            let dotColor = currentStatus === 'Busy' ? 'bg-rose-500 shadow-[0_0_8px_#f43f5e]' :
+                           currentStatus === 'Relatively Free' ? 'bg-amber-400 shadow-[0_0_8px_#fbbf24]' :
+                           'bg-emerald-500 shadow-[0_0_8px_#10b981]';
+            let dot = document.getElementById('availability-dot');
+            if (dot) {
+                dot.className = `w-2.5 h-2.5 rounded-full ${dotColor}`;
+                dot.title = currentStatus; 
+            }
+        }
+      }
+
+      function onDataReceived(data, isCache) {
+        if (!isCache) {
+            document.getElementById('loading-spinner').classList.add('hidden');
+        }
+        
+        allTasksData.RTA = data.rtaTasks || [];
+        allTasksData.TL = data.tlTasks || [];
+        allCapacityData.RTA = data.rtaCapacity || Array(48).fill("Free");
+        allCapacityData.TL = data.tlCapacity || Array(48).fill("Free");
+        
+        userRole = data.userRole || "Agent";
+        userEmailVal = data.userEmail || "Fetching...";
+        if(document.getElementById('ho-email')) document.getElementById('ho-email').value = userEmailVal;
+        
+        predictHandoffReason();
+        
+        if (["BM", "BC", "QML", "Manager"].includes(userRole)) {
+            if(document.getElementById('task-view-toggle-container')) document.getElementById('task-view-toggle-container').classList.remove('hidden');
+            currentGanttPerspective = "RTA"; 
+        } else if (userRole === "TL") {
+            currentGanttPerspective = "TL";
+        } else {
+            currentGanttPerspective = "RTA";
+        }
+        
+        if (userRole === "Agent" && !isCache) {
+            setView('agent-tools');
+        } else if (!isCache) {
+            setView('tasks');
+        }
+
+        toggleUserGanttPerspective(currentGanttPerspective);
+        
+        hcIntervals = data.headcountIntervals || [];
+        hcValues = data.headcountValues || [];
+        globalTools = data.tools || [];
+        globalCommands = data.commands || [];
+        
+        renderTools();
+        updateClocksAndHC();
+
+        completeData = data.emails.dataByWeek;
+        const availableWeeks = data.emails.availableWeeks;
+        
+        const optionsContainer = document.getElementById('dropdown-options');
+        optionsContainer.innerHTML = ''; 
+        
+        if (availableWeeks && availableWeeks.length > 0) {
+            let currentSelected = availableWeeks[0];
+            const todayTime = new Date().getTime();
+            let minDiff = Infinity;
+            
+            availableWeeks.forEach(week => {
+                let displayName = week;
+                let firstDate = (completeData[week] && completeData[week].dates) ? completeData[week].dates[0] : "";
+                let titleText = `Starting: ${firstDate || 'Unknown'}`;
+                
+                if (firstDate && !firstDate.startsWith("Day")) {
+                   let weekStart = new Date(firstDate);
+                   if (!isNaN(weekStart)) {
+                       let diff = todayTime - weekStart.getTime();
+                       if (diff >= 0 && diff <= (7 * 24 * 60 * 60 * 1000)) {
+                           currentSelected = week;
+                       } else if (diff > 0 && diff < minDiff) {
+                           minDiff = diff;
+                           if (currentSelected === availableWeeks[0]) {
+                               currentSelected = week;
+                           }
+                       }
+                   }
+                }
+                optionsContainer.innerHTML += `<button type="button" onclick="selectWeek('${week}', '${displayName}')" title="${titleText}" class="w-full text-left block px-4 py-2 text-sm text-obsi-text hover:bg-obsi-accent/20 hover:text-white transition-colors cursor-pointer">${displayName}</button>`;
+            });
+            
+            selectedWeek = currentSelected;
+            document.getElementById('dropdown-selected-text').innerText = selectedWeek;
+            
+            let initialDate = (completeData[selectedWeek] && completeData[selectedWeek].dates) ? completeData[selectedWeek].dates[0] : "";
+            document.getElementById('custom-dropdown-container').setAttribute('title', `Starting: ${initialDate || 'Unknown'}`);
+            
+            updateViewForWeek();
+        } else {
+            document.getElementById('dropdown-selected-text').innerText = 'No Schedules Found';
+            optionsContainer.innerHTML = '<span class="block px-4 py-2 text-sm text-obsi-muted">Please sync DB to load.</span>';
+        }
+      }
+
+      function updateViewForWeek() {
+        try {
+          if (!completeData[selectedWeek]) return;
+          globalAgents = completeData[selectedWeek].agents || [];
+          globalDates = completeData[selectedWeek].dates || [];
+          
+          if (!globalDates || globalDates.length < 7) {
+              globalDates = ['Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5', 'Day 6', 'Day 7'];
+          }
+
+          if (currentMode === 'table') renderTable();
+          if (currentMode === 'graph') initStarMap();
+          lucide.createIcons();
+        } catch(e) { }
+      }
+
+      function setTeamFilter(team) {
+        currentTeamFilter = team;
+        document.querySelectorAll('.filter-btn').forEach(btn => {
+          if (btn.getAttribute('data-team') === team) {
+            btn.className = "filter-btn px-4 py-1 rounded-lg text-xs font-bold bg-obsi-accent text-white transition-all shadow-md";
+          } else {
+            btn.className = "filter-btn px-4 py-1 rounded-lg text-xs font-bold bg-obsi-panel text-obsi-muted border border-obsi-border hover:text-white transition-all";
+          }
+        });
+        if (currentMode === 'table') renderTable();
+        if (currentMode === 'graph') initStarMap();
+        lucide.createIcons();
+      }
+
+      function renderTable() {
+        const tableHeader = document.getElementById('table-header-row');
+        const tableBody = document.getElementById('table-body');
+        const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+        
+        let searchQuery = document.getElementById('agent-search')?.value.toLowerCase() || "";
+
+        let filteredAgents = currentTeamFilter === 'All' 
+            ? globalAgents 
+            : globalAgents.filter(a => a.team === currentTeamFilter || (currentTeamFilter === 'Operations' && a.team === 'Agent'));
+
+        if (searchQuery) {
+            filteredAgents = filteredAgents.filter(a => {
+                let nameStr = a.agentName ? a.agentName.toLowerCase() : "";
+                let idStr = a.hrid ? String(a.hrid) : "";
+                return nameStr.includes(searchQuery) || idStr.includes(searchQuery);
+            });
+        }
+
+        let headerHTML = `<th class="p-3 font-bold text-obsi-muted uppercase tracking-widest bg-[#222222] border-b border-r border-obsi-border w-48 sticky-col shadow-[4px_0_10px_-4px_rgba(0,0,0,0.5)] z-30 text-xs">Agent</th>`;
+        for(let i = 0; i < 7; i++) {
+           let fullDateStr = globalDates[i] || "";
+           let displayDate = "";
+           
+           if (fullDateStr && !fullDateStr.startsWith("Day ")) {
+               let d = new Date(fullDateStr);
+               if (isNaN(d) && String(fullDateStr).includes('/')) {
+                   let parts = String(fullDateStr).split('/');
+                   if (parts.length >= 2) d = new Date(`${parts[1]}/${parts[0]}/${parts[2] || new Date().getFullYear()}`);
+               }
+               if (!isNaN(d)) {
+                   displayDate = d.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+               } else displayDate = fullDateStr;
+           } else displayDate = fullDateStr;
+           
+           headerHTML += `
+            <th class="p-2 text-center border-b border-obsi-border/50 bg-[#222222]/80 min-w-[80px]">
+              <div class="text-xs font-extrabold text-obsi-text">${dayNames[i]}</div>
+              <div class="text-[10px] font-normal text-obsi-muted/70 mt-0.5 whitespace-nowrap">${displayDate}</div>
+            </th>`;
+        }
+        tableHeader.innerHTML = headerHTML;
+
+        let rowsHTML = "";
+        if (!filteredAgents || filteredAgents.length === 0) {
+            tableBody.innerHTML = `<tr><td colspan="8" class="text-center py-12 text-obsi-muted text-sm italic">No schedules found.</td></tr>`;
+            return;
+        }
+
+        filteredAgents.forEach((person, index) => {
+          let teamLabel = person.team || 'Unknown';
+          let teamBadgeColor = person.team === 'Management' ? 'bg-rose-600/20 text-rose-400 border border-rose-500/30' :
+                               person.team === 'RTA' ? 'bg-indigo-500/20 text-indigo-300' :
+                               person.team === 'SME' ? 'bg-blue-500/20 text-blue-300' :
+                               person.team === 'TL'  ? 'bg-emerald-500/20 text-emerald-300' :
+                               'bg-slate-500/20 text-slate-300';
+                               
+          let rowBg = index % 2 === 0 ? 'bg-transparent' : 'bg-obsi-border/10';
+          let displayTitle = person.agentName || "Unknown";
+          
+          if (person.team === 'Management') {
+              if (displayTitle.includes("Ayman Hassan")) {
+                  displayTitle = "QML - " + displayTitle.replace("QML - ", ""); 
+                  teamLabel = "QML";
+              } else if (displayTitle.includes("Kareem") || displayTitle.includes("Younes")) {
+                  displayTitle = "BC - " + displayTitle.replace("BC - ", ""); 
+                  teamLabel = "BC";
+                  teamBadgeColor = "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30";
+              } else if (displayTitle.includes("Eman Taha")) {
+                  displayTitle = "BM - " + displayTitle.replace("BM - ", "");
+                  teamLabel = "BM";
+                  teamBadgeColor = "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30";
+              }
+          }
+
+          let cellsHTML = "";
+          let safeSchedule = Array.isArray(person.schedule) ? person.schedule : [];
+          
+          for (let dIdx = 0; dIdx < 7; dIdx++) {
+            let day = safeSchedule[dIdx] || { isOff: true, start: "OFF", end: "OFF" };
+            
+            if (day.isOff || !day.start || day.start === "OFF" || day.start === "") {
+               cellsHTML += `
+                 <td class="p-2 border-b border-obsi-border/30 text-center">
+                   <span class="px-2 py-1 rounded-lg bg-obsi-bg text-obsi-muted/50 text-[10px] font-extrabold border border-obsi-border/50 uppercase tracking-widest shadow-sm">
+                     ${day.start || "OFF"}
+                   </span>
+                 </td>`;
+            } else {
+               cellsHTML += `
+                 <td class="p-2 border-b border-obsi-border/30 text-center">
+                   <div class="inline-flex flex-col items-center justify-center bg-obsi-accent/10 border border-obsi-accent/20 rounded-md px-3 py-1 shadow-sm min-w-[70px]">
+                     <span class="text-[11px] font-bold text-white tracking-wide">${day.start}</span>
+                     <span class="text-[9px] text-obsi-accent font-semibold leading-none mt-0.5">to ${day.end}</span>
+                   </div>
+                 </td>`;
+            }
+          }
+
+          rowsHTML += `
+            <tr class="${rowBg} hover:bg-obsi-accent/5 transition-colors group">
+              <td class="p-3 border-b border-r border-obsi-border/50 bg-[#252525] group-hover:bg-[#2a2a2a] sticky-col shadow-[4px_0_10px_-4px_rgba(0,0,0,0.5)] transition-colors z-20">
+                <h2 class="text-[13px] font-bold text-white truncate drop-shadow-sm">${displayTitle}</h2>
+                <div class="flex items-center gap-1.5 mt-1">
+                  <span class="text-[8px] font-bold px-1.5 py-0.5 rounded uppercase ${teamBadgeColor}">${teamLabel}</span>
+                  <span class="text-[9px] text-obsi-muted/60 font-mono tracking-wide">${person.hrid !== 'N/A' ? person.hrid : ''}</span>
+                </div>
+              </td>
+              ${cellsHTML}
+            </tr>`;
+        });
+        tableBody.innerHTML = rowsHTML;
+      }
+
+      function setView(mode) {
+        currentMode = mode;
+        const mainContent = document.getElementById('main-content');
+        const filterBar = document.getElementById('filter-bar');
+        
+        const views = ['tasks', 'table', 'mappings', 'tools', 'agent-tools'];
+        views.forEach(v => {
+           if(document.getElementById(`${v}-container`)) document.getElementById(`${v}-container`).classList.add('hidden');
+        });
+        
+        ['btn-tasks', 'btn-table', 'btn-agent-tools'].forEach(id => {
+            if(document.getElementById(id)) document.getElementById(id).className = "px-4 py-1.5 rounded-md text-sm font-semibold transition-all text-obsi-muted hover:text-white";
+        });
+        if(document.getElementById('view-dropdown-container')) {
+           document.getElementById('view-dropdown-container').querySelector('button').classList.remove('text-obsi-accent');
+           document.getElementById('view-dropdown-container').querySelector('button').classList.add('text-obsi-muted');
+        }
+        
+        mainContent.classList.remove('opacity-0', 'pointer-events-none');
+        
+        if (mode === 'tasks') {
+           if(document.getElementById('btn-tasks')) document.getElementById('btn-tasks').className = "px-4 py-1.5 rounded-md text-sm font-semibold transition-all bg-obsi-accent/20 text-obsi-accent";
+           filterBar.classList.add('hidden');
+           document.getElementById('tasks-container').classList.remove('hidden');
+        } 
+        else if (mode === 'agent-tools') {
+           if(document.getElementById('btn-agent-tools')) document.getElementById('btn-agent-tools').className = "px-4 py-1.5 rounded-md text-sm font-semibold transition-all bg-obsi-accent/20 text-obsi-accent";
+           filterBar.classList.add('hidden');
+           document.getElementById('agent-tools-container').classList.remove('hidden');
+        } 
+        else if (mode === 'table') {
+           if(document.getElementById('btn-table')) document.getElementById('btn-table').className = "px-4 py-1.5 rounded-md text-sm font-semibold transition-all bg-obsi-accent/20 text-obsi-accent";
+           filterBar.classList.remove('hidden');
+           filterBar.classList.add('flex');
+           document.getElementById('table-container').classList.remove('hidden');
+           renderTable();
+        } 
+        else if (mode === 'mappings') {
+           document.getElementById('view-dropdown-container').querySelector('button').classList.add('text-obsi-accent');
+           document.getElementById('view-dropdown-container').querySelector('button').classList.remove('text-obsi-muted');
+           filterBar.classList.add('hidden');
+           document.getElementById('mappings-container').classList.remove('hidden');
+        }
+        else if (mode === 'tools') {
+           document.getElementById('view-dropdown-container').querySelector('button').classList.add('text-obsi-accent');
+           document.getElementById('view-dropdown-container').querySelector('button').classList.remove('text-obsi-muted');
+           filterBar.classList.add('hidden');
+           document.getElementById('tools-container').classList.remove('hidden');
+        }
+        else if (mode === 'graph') {
+           document.getElementById('view-dropdown-container').querySelector('button').classList.add('text-obsi-accent');
+           document.getElementById('view-dropdown-container').querySelector('button').classList.remove('text-obsi-muted');
+           mainContent.classList.add('opacity-0', 'pointer-events-none'); 
+           initStarMap();
+        }
+      }
+
+      // --- OBSIDIAN-STYLE STAR MAP GRAPH ---
+      let animationFrameId;
+      let starMapCanvasInitialized = false;
+      let starMapMouse = { x: -1000, y: -1000, active: false, clickedNode: null, draggedNode: null };
+      
+      function initStarMap() {
+        const canvas = document.getElementById('starMap');
+        const ctx = canvas.getContext('2d');
+        let width = window.innerWidth;
+        let height = window.innerHeight;
+        canvas.width = width;
+        canvas.height = height;
+
+        if (!starMapCanvasInitialized) {
+            window.addEventListener('resize', () => {
+              width = window.innerWidth; height = window.innerHeight;
+              canvas.width = width; canvas.height = height;
+            });
+            window.addEventListener('mousemove', (e) => { 
+                starMapMouse.x = e.clientX; starMapMouse.y = e.clientY; starMapMouse.active = true; 
+                if (starMapMouse.draggedNode) {
+                    starMapMouse.draggedNode.x = e.clientX; starMapMouse.draggedNode.y = e.clientY;
+                    starMapMouse.draggedNode.vx = 0; starMapMouse.draggedNode.vy = 0;
+                }
+            });
+            window.addEventListener('mouseout', () => { starMapMouse.active = false; starMapMouse.draggedNode = null; });
+            window.addEventListener('mousedown', (e) => {
+                if (currentMode !== 'graph') return;
+                for (let n of window.starMapNodes) {
+                    let dx = e.clientX - n.x; let dy = e.clientY - n.y;
+                    if (Math.sqrt(dx*dx + dy*dy) < n.radius + 15) { starMapMouse.draggedNode = n; break; }
+                }
+            });
+            window.addEventListener('mouseup', () => { starMapMouse.draggedNode = null; });
+            window.addEventListener('click', (e) => {
+                if (currentMode !== 'graph') return;
+                starMapMouse.clickedNode = null;
+                for (let n of window.starMapNodes) {
+                    let dx = e.clientX - n.x; let dy = e.clientY - n.y;
+                    if (Math.sqrt(dx*dx + dy*dy) < n.radius + 15) { starMapMouse.clickedNode = n; break; }
+                }
+            });
+            starMapCanvasInitialized = true;
+        }
+
+        let nodes = [];
+        let edges = [];
+        const teams = ["RTA", "SME", "TL", "Operations", "Management"];
+        const teamNodes = {};
+        teams.forEach((team, idx) => {
+            let tn = {
+                id: `team_${team}`, name: `${team} Hub`, isTeam: true,
+                x: width/2 + Math.cos(idx * Math.PI/2) * 200, y: height/2 + Math.sin(idx * Math.PI/2) * 200,
+                vx: 0, vy: 0, radius: 12,
+                color: team === 'RTA' ? '#f87171' : team === 'SME' ? '#60a5fa' : team === 'TL' ? '#34d399' : team === 'Management' ? '#facc15' : '#94a3b8'
+            };
+            nodes.push(tn);
+            teamNodes[team] = tn;
+        });
+
+        let currentDayIndex = new Date().getDay() - 1; 
+        if (currentDayIndex < 0) currentDayIndex = 6;
+
+        const filteredAgents = currentTeamFilter === 'All' 
+            ? globalAgents 
+            : globalAgents.filter(a => a.team === currentTeamFilter || (currentTeamFilter === 'Operations' && a.team === 'Agent'));
+
+        filteredAgents.forEach(agent => {
+            let safeSchedule = Array.isArray(agent.schedule) ? agent.schedule : [];
+            let todayShift = safeSchedule[currentDayIndex] || { isOff: true, start: "OFF", end: "OFF" };
+            let shiftString = todayShift.isOff ? "OFF" : `${todayShift.start} to ${todayShift.end}`;
+
+            let aName = agent.agentName || "Unknown";
+            let displayTitle = aName;
+            let nColor = '#ffffff';
+            let tAssign = agent.team;
+            
+            if (tAssign === 'RTA') nColor = '#ef4444'; 
+            else if (tAssign === 'SME') nColor = '#3b82f6'; 
+            else if (tAssign === 'TL') nColor = '#10b981'; 
+            else if (tAssign === 'Management') nColor = '#facc15';
+
+            if (aName.includes("Ayman Hassan")) displayTitle = `QML - ${aName.replace("QML - ", "")}`;
+            else if (aName.includes("Kareem") || aName.includes("Younes")) displayTitle = `BC - ${aName.replace("BC - ", "")}`;
+            else if (aName.includes("Eman Taha")) displayTitle = `BM - ${aName.replace("BM - ", "")}`;
+
+            let agentNode = {
+                id: agent.hrid, name: displayTitle, isTeam: false, shiftToday: shiftString,
+                color: nColor, x: Math.random() * width, y: Math.random() * height,
+                vx: (Math.random() - 0.5), vy: (Math.random() - 0.5), radius: 4,
+                teamNode: teamNodes[tAssign] || teamNodes["Operations"]
+            };
+            nodes.push(agentNode);
+            edges.push({ source: agentNode, target: agentNode.teamNode });
+        });
+
+        window.starMapNodes = nodes;
+        if (animationFrameId) cancelAnimationFrame(animationFrameId);
+        
+        function animate() {
+            ctx.clearRect(0, 0, width, height);
+            const isGraphMode = currentMode === 'graph';
+            
+            if (!isGraphMode) {
+                nodes.forEach(n => {
+                    n.x += n.vx * 0.1; n.y += n.vy * 0.1;
+                    if (n.x < 0) n.x = width; if (n.x > width) n.x = 0;
+                    if (n.y < 0) n.y = height; if (n.y > height) n.y = 0;
+                    ctx.beginPath(); ctx.arc(n.x, n.y, n.isTeam ? 2 : 1.5, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(255,255,255,0.1)'; ctx.fill();
+                });
+            } else {
+                const centerGravity = 0.0001; const repulsion = 800; 
+                let hoveredNode = null;
+                if (starMapMouse.active && !starMapMouse.draggedNode) {
+                    for (let n of nodes) {
+                        let dx = starMapMouse.x - n.x; let dy = starMapMouse.y - n.y;
+                        if (Math.sqrt(dx*dx + dy*dy) < n.radius + 15) { hoveredNode = n; break; }
+                    }
+                } else if (starMapMouse.draggedNode) { hoveredNode = starMapMouse.draggedNode; }
+
+                for(let i=0; i<nodes.length; i++) {
+                    let n1 = nodes[i];
+                    if (n1 !== starMapMouse.draggedNode) {
+                        for(let j=i+1; j<nodes.length; j++) {
+                            let n2 = nodes[j];
+                            if (n2 === starMapMouse.draggedNode) continue;
+                            let dx = n1.x - n2.x; let dy = n1.y - n2.y;
+                            let dist = Math.sqrt(dx*dx + dy*dy) || 1;
+                            if(dist < 100) {
+                                let force = repulsion / (dist * dist);
+                                n1.vx += (dx/dist) * force; n1.vy += (dy/dist) * force;
+                                n2.vx -= (dx/dist) * force; n2.vy -= (dy/dist) * force;
+                            }
+                        }
+                        if (n1.isTeam) {
+                           n1.vx += (width/2 - n1.x) * (centerGravity * 5); n1.vy += (height/2 - n1.y) * (centerGravity * 5);
+                        }
+                        n1.vx *= 0.82; n1.vy *= 0.82; n1.x += n1.vx; n1.y += n1.vy; 
+                        n1.x = Math.max(20, Math.min(width - 20, n1.x)); n1.y = Math.max(20, Math.min(height - 20, n1.y));
+                    }
+                }
+
+                edges.forEach(edge => {
+                    let dx = edge.target.x - edge.source.x; let dy = edge.target.y - edge.source.y;
+                    let dist = Math.sqrt(dx*dx + dy*dy) || 1; let pull = (dist - 120) * 0.003; 
+                    if (edge.source !== starMapMouse.draggedNode) { edge.source.vx += (dx/dist) * pull; edge.source.vy += (dy/dist) * pull; }
+                    if (edge.target !== starMapMouse.draggedNode) { edge.target.vx -= (dx/dist) * pull; edge.target.vy -= (dy/dist) * pull; }
+                });
+
+                edges.forEach(edge => {
+                    let isConnectedToHover = hoveredNode && (hoveredNode === edge.source || hoveredNode === edge.target);
+                    let opacity = hoveredNode ? (isConnectedToHover ? 0.8 : 0.05) : 0.2;
+                    ctx.beginPath(); ctx.moveTo(edge.source.x, edge.source.y); ctx.lineTo(edge.target.x, edge.target.y);
+                    ctx.strokeStyle = `rgba(168,130,255, ${opacity})`; ctx.lineWidth = isConnectedToHover ? 1.5 : 0.5; ctx.stroke();
+                });
+
+                nodes.forEach(node => {
+                    let isHovered = hoveredNode === node;
+                    let isConnectedToHover = hoveredNode && (hoveredNode.teamNode === node || node.teamNode === hoveredNode);
+                    let opacity = hoveredNode ? (isHovered || isConnectedToHover ? 1 : 0.2) : 1;
+                    
+                    ctx.beginPath(); ctx.arc(node.x, node.y, isHovered ? node.radius + 2 : node.radius, 0, Math.PI * 2);
+                    if (node.isTeam) {
+                        ctx.fillStyle = node.color; ctx.shadowBlur = 15; ctx.shadowColor = node.color;
+                    } else {
+                        ctx.fillStyle = node.color === '#ffffff' ? `rgba(255, 255, 255, ${opacity})` : node.color;
+                        ctx.shadowBlur = isHovered ? 10 : 0; ctx.shadowColor = node.color;
+                    }
+                    ctx.fill(); ctx.shadowBlur = 0; 
+
+                    if (node.isTeam || isHovered || isConnectedToHover) {
+                        ctx.fillStyle = `rgba(255,255,255,${opacity})`;
+                        ctx.font = node.isTeam ? "bold 14px sans-serif" : "11px sans-serif";
+                        ctx.fillText(node.name, node.x + 12, node.y + 4);
+                    }
+                });
+
+                if (starMapMouse.clickedNode && !starMapMouse.clickedNode.isTeam) {
+                    let cn = starMapMouse.clickedNode;
+                    ctx.fillStyle = "rgba(26, 26, 26, 0.9)";
+                    ctx.strokeStyle = cn.color === '#ffffff' ? "#a882ff" : cn.color;
+                    ctx.lineWidth = 1; ctx.beginPath(); ctx.roundRect(cn.x + 15, cn.y - 45, 170, 55, 8);
+                    ctx.fill(); ctx.stroke();
+                    ctx.fillStyle = "#ffffff"; ctx.font = "bold 12px sans-serif"; ctx.fillText(cn.name, cn.x + 25, cn.y - 23);
+                    ctx.fillStyle = cn.shiftToday === "OFF" ? "#fb7185" : "#34d399"; ctx.font = "11px sans-serif"; ctx.fillText(`Today: ${cn.shiftToday}`, cn.x + 25, cn.y - 7);
+                }
+            }
+            animationFrameId = requestAnimationFrame(animate);
+        }
+        animate();
+      }
+    </script>  
+  </body>
+</html>
